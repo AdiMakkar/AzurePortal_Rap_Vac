@@ -1,0 +1,63 @@
+#Save this yaml file to your Azure repo
+#Create a new Azure git yaml pipeline and point it to this file
+#Change info  where the comments indicate
+#When first running this pipeline you may need to click and allow permission to the repo
+
+
+trigger: none
+
+pool:
+  name: "Self Pool"
+
+resources:
+  repositories:
+    - repository: download
+      type: github
+      endpoint: github.com_AdiMakkar
+      name: leccory/adidownload
+    
+
+jobs:
+  - job: Download
+    steps:
+
+#Check out the GH repo with the placeholder files
+      - checkout: download
+
+#Create and move the portal folder into the backup directory
+      - script: |
+          mkdir '$(Build.SourcesDirectory)\backup'
+          mv microsoft* '$(Build.SourcesDirectory)\backup'
+        displayName: 'Move portal files'
+      
+#Create a ZIP file out of the rapid portal folder move it to the artifact directory
+      - task: ArchiveFiles@2
+        inputs:
+          rootFolderOrFile: '$(Build.SourcesDirectory)\backup'
+          includeRootFolder: false
+          archiveType: zip
+          archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+          replaceExistingArchive: true
+        displayName: "Archive Portal folder"
+
+#Move the vaccine attestation content into the Artifact directory
+      - script: |
+          mv vaccine* '$(Build.ArtifactStagingDirectory)'
+        displayName: "Move Vax files"
+
+#Publish both the ZIP files in the artifact directory to an artifact called dev
+      - publish: '$(Build.ArtifactStagingDirectory)'
+        artifact: dev
+        displayName: "Publish Dev artifact"
+
+
+# In the upload pipeline
+# Remove the Download artifact task and replace it with a new task
+# Find the Download Pipeline Artifacts task
+# Select Specific Build
+# Select the project
+# Select the pipeline where the artifacts are generated (whatever you called the download pipeline)
+# Select latest from the build version to download
+# Artifact name: dev
+# Destionation directory, leave as default
+# Click add and make sure the whole task is properly indented 

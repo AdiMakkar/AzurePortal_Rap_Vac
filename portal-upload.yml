@@ -1,0 +1,88 @@
+#This pipeline triggers when the Download pipeline successfully runs.
+pool:
+  name: "Self Pool"
+  
+resources:
+  repositories:
+  - repository: gcr2wp # The name used to reference this repository in the checkout step
+    type: github
+    endpoint: github.com_AdiMakkar
+    name: canada-ca/gcr2wp
+    
+stages:
+- stage: Get_Files
+
+  jobs:
+   - job: Rename_and_upload #Add files into the branch
+     displayName: 'Fetch files'
+     steps:
+     
+# Checkout Self saves to Build.SourcesDirectory/<RepoName>
+     - checkout: self
+       displayName: GIT-Checkout self
+
+# Downloads the artifacts from the Download pipeline
+     - task: DownloadBuildArtifacts@1
+       inputs:
+            buildType: 'specific'
+            project: 'f3dca41e-6054-4d42-9cf0-7a7c9b4df6ed'
+            pipeline: '3'
+            buildVersionToDownload: 'latest'
+            downloadType: 'single'
+            artifactName: 'dev'
+            downloadPath: '$(System.ArtifactsDirectory)'
+
+# Checks out the gcr2wp/maintest repo saves to $Build.SourcesDirectory/<repoName>
+     - checkout: gcr2wp
+       clean: true
+       displayName: GIT-Checkout gcr2wp/maintest
+
+##########################################################################################
+# Multi step script performs:                                                            #
+# uses a JS script to create new filenames based off the old portal file's version number#
+# moves the artifact files into the repo and renames them with the name in step above    #
+# removes the old file                                                                   #
+# checks out a new branch using the buildID                                              #
+# sets username and email, stages the files, creates a commit                            #
+# removes and recreates the remote repo passing in PAT before pushing the new branch up  #
+##########################################################################################
+
+     - task: CmdLine@2
+       inputs:
+          script: |
+            mkdir $(System.ArtifactsDirectory)/staging
+            mv $(System.ArtifactsDirectory)/vacc*.zip $(System.ArtifactsDirectory)/staging
+            ls -lR $(System.ArtifactsDirectory)
+            declare -a files=()
+            vax=$(cd ./gcr2wp && ls VaccineAttest*.zip)
+            rap=$(cd ./gcr2wp && ls Rapid-Attestation-Portal-Content*.zip)
+            newVax=""
+            newRap=""
+            files[0]=$vax
+            files[1]=$rap
+
+            for i in "${files[@]}"; 
+            do if [[ "$i" == "$rap" ]]; 
+            then newRap=$(node "./adimakkarca/rename.js" "${rap}"); 
+            else newVax=$(node "./adimakkarca/rename.js" "${vax}"); 
+            fi; 
+            done
+
+            cd "./gcr2wp"
+            (cd '$(System.ArtifactsDirectory)' && mv *.zip '$(Build.SourcesDirectory)'/gcr2wp/"${newRap}")
+            (cd '$(System.ArtifactsDirectory)/staging' && mv *.zip '$(Build.SourcesDirectory)'/gcr2wp/"${newVax}")
+            rm "${vax}" && rm "${rap}"
+            
+     - task: CmdLine@2
+       inputs:
+         script: |
+            git switch -c "new-build-$(Build.BuildId)"
+            git branch -a
+            git config --global user.email "azure.devops@gcdigital-gcnumerique.gc.ca"
+            git config --global user.name "Azure DevOps"
+            git add .
+            git commit -m "pushing new build ${newName}"
+            git remote remove origin
+            git remote add origin https://$(PAT)@github.com/canada-ca/gcr2wp
+            git push origin "new-build-$(Build.BuildId)"
+       displayName: CMD_GIT-Increment build commit to new branch
